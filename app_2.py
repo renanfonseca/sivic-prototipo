@@ -8,7 +8,6 @@ import urllib.request
 
 # Imports do Selenium para automação real de navegador
 from selenium import webdriver
-from selenium.webdriver import Chrome
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -58,11 +57,13 @@ class ScrapingInstagram(Scraping):
                 time.sleep(3)
 
             # --- ANTÍDOTO CONTRA STORIES ABERTOS ---
+            # O robô tenta localizar o botão 'X' de fechar stories se ele abrir sozinho
             try:
                 botao_fechar_story = driver.find_element(By.XPATH, "//*[@aria-label='Fechar' or @aria-label='Close']|//*[local-name()='svg' and @aria-label='Fechar']/..")
                 botao_fechar_story.click()
-                time.sleep(1.5)
+                time.sleep(1.5) # Aguarda a tela voltar para o perfil
             except Exception:
+                # Se não achou o botão, o story não abriu sozinho. Segue o fluxo.
                 pass
 
             # 1. Captura a foto real do perfil
@@ -87,117 +88,39 @@ class ScrapingInstagram(Scraping):
             if foto_url:
                 urllib.request.urlretrieve(foto_url, nome_arquivo_foto)
             
-            # 3. --- EXTRAÇÃO DE IMAGENS E LINKS DOS POSTS ---
-            links_posts_alvo = []
+            # 3. --- EXTRAÇÃO  DE TODAS AS IMAGENS DO FEED ---
+            arquivos_posts_baixados = []
             links_processados = set()
             contador_posts = 1
             
-            st.info("🔍 Mapeando a estrutura do feed e salvando mídias originais...")
-            
-            for scroll in range(4):
-                elementos_links = driver.find_elements(By.XPATH, "//main//a[contains(@href, '/p/')]")
+            # Loop de rolagens com foco exclusivo nas tags de link de posts (/p/) dentro do <main>
+            for scroll in range(25):
+                elementos_posts = driver.find_elements(By.XPATH, "//main//a[contains(@href, '/p/')]//img")
                 
-                for el in elementos_links:
+                for elem in elementos_posts:
                     try:
-                        link_href = el.get_attribute("href")
-                        elemento_img = el.find_element(By.TAG_NAME, "img")
-                        src_post = elemento_img.get_attribute("src")
-                        
+                        src_post = elem.get_attribute("src")
                         if src_post and src_post != foto_url and "blob:" not in src_post and src_post not in links_processados:
                             links_processados.add(src_post)
-                            links_posts_alvo.append((link_href, src_post))
                             
                             nome_post_local = os.path.join(self.pasta_destino, f"post_{username}_{contador_posts}.jpg")
                             urllib.request.urlretrieve(src_post, nome_post_local)
+                            arquivos_posts_baixados.append(f"post_{username}_{contador_posts}.jpg")
                             contador_posts += 1
                     except Exception:
                         continue
                 
+                # Executa o scroll forçando o navegador a descer sem simular cliques perigosos
                 driver.execute_script("window.scrollBy(0, 1200);")
-                time.sleep(2.5)
+                time.sleep(3.0) # Delay seguro para renderizar o feed na conta logada
 
-            # 4. --- MINERAÇÃO CIRÚRGICA DE ENGAJAMENTO (COMENTÁRIOS E CURTIDAS) ---
-            st.info(f"💬 Analisando interações em {len(links_posts_alvo)} posts localizados...")
-            total_comentarios_coletados = 0
-            
-            for index, (link_completo, _) in enumerate(links_posts_alvo, start=1):
-                try:
-                    driver.get(link_completo)
-                    time.sleep(5) 
-                    
-                    # Força uma rolagem interna no card para renderizar os dados assíncronos
-                    driver.execute_script("window.scrollBy(0, 200);")
-                    time.sleep(1.5)
-
-                    # A. Extração do Total de Curtidas do Post
-                    texto_curtidas = "Não foi possível extrair (Curtidas ocultas ou carrossel bloqueado)"
-                    try:
-                        # O Instagram agrupa as curtidas em seções estruturadas abaixo dos botões de interação
-                        elemento_curtidas = driver.find_element(By.XPATH, "//article//section[contains(., 'curtida') or contains(., 'like')]//span | //article//section//div[text()]")
-                        if elemento_curtidas:
-                            texto_curtidas = elemento_curtidas.text.strip()
-                    except Exception:
-                        try:
-                            # Fallback alternativo para o contador de curtidas
-                            elemento_curtidas = driver.find_element(By.XPATH, "//a[contains(@href, 'liked_by')]/span")
-                            texto_curtidas = elemento_curtidas.text.strip() + " curtidas"
-                        except Exception:
-                            pass
-
-                    # B. Extração Cirúrgica de Autores e Comentários
-                    # Mapeia cada linha de comentário (<li>) dentro da lista principal (<ul>)
-                    linhas_comentarios = driver.find_elements(By.XPATH, "//ul//li[contains(@class, '')]")
-                    
-                    comentarios_estruturados = []
-                    for linha in linhas_comentarios:
-                        try:
-                            # Pega o link do autor do comentário específico (dentro da linha atual)
-                            user_elem = linha.find_element(By.XPATH, ".//h3//a | .//h2//a | .//a[contains(@href, '/') and @role='link']")
-                            autor_comentario = user_elem.text.strip()
-                            
-                            # Pega o bloco de texto do comentário associado a esse autor
-                            text_elem = linha.find_element(By.XPATH, ".//span[not(ancestor::h3) and not(ancestor::h2)]")
-                            texto_comentario = text_elem.text.strip()
-                            
-                            if autor_comentario and texto_comentario:
-                                # Filtra interações falsas do sistema (ex: texto do botão responder)
-                                if not any(texto_comentario.startswith(ignorar) for ignorar in ["Ver respostas", "Responder", "Ver tudo"]):
-                                    registro = f"Usuário: @{autor_comentario} | Comentou: \"{texto_comentario}\""
-                                    if registro not in comentarios_estruturados:
-                                        comentarios_estruturados.append(registro)
-                        except Exception:
-                            continue
-
-                    # Criação do arquivo detalhado de inteligência forense para o post atual
-                    nome_txt_comentarios = os.path.join(self.pasta_destino, f"dados_post_{username}_{index}.txt")
-                    with open(nome_txt_comentarios, "w", encoding="utf-8") as f:
-                        f.write(f"==================================================\n")
-                        f.write(f"        S.I.V.I.C. - RELATÓRIO DE INTERAÇÕES\n")
-                        f.write(f"==================================================\n")
-                        f.write(f"URL da Evidência: {link_completo}\n")
-                        f.write(f"Data/Hora da Extração: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                        f.write(f"Alvo Monitorado: @{username}\n")
-                        f.write(f"Métrica de Engajamento: {texto_curtidas}\n")
-                        f.write("-" * 50 + "\n\n")
-                        f.write(f"--- LISTA DE USUÁRIOS QUE INTERAGIRAM / COMENTARAM ---\n")
-                        
-                        if comentarios_estruturados:
-                            for idx, item in enumerate(comentarios_estruturados, start=1):
-                                f.write(f"[{idx}] {item}\n")
-                            total_comentarios_coletados += len(comentarios_estruturados)
-                        else:
-                            f.write("Nenhum comentário textual detectado neste post durante o rastreamento.\n")
-                            
-                except Exception:
-                    continue
-
-            evidencia_final = f"Metadados: {bio_texto} | Mídias extraídas: {len(links_posts_alvo)} | Interações catalogadas no computador."
+            evidencia_final = f"Metadados: {bio_texto} | Total de postagens salvas no feed: {len(arquivos_posts_baixados)}"
             
             return {
                 "ALVO": f"Instagram: @{username}",
                 "EVIDENCIA": evidencia_final,
                 "FOTO": foto_url,
-                "POSTS_BAIXADOS": f"{len(links_posts_alvo)} posts analisados com sucesso. Verifique os arquivos de imagem e relatórios textuais (.txt) na pasta: {self.pasta_destino}"
+                "POSTS_BAIXADOS": f"{len(arquivos_posts_baixados)} mídias salvas com sucesso em: {self.pasta_destino}"
             }
             
         except Exception as e:
@@ -213,7 +136,7 @@ class InsercaoManual(OrigemDado):
 # CONFIGURAÇÃO DA INTERFACE (STREAMLIT)
 # ==========================================
 
-st.set_page_config(layout="wide", page_title="S.I.V.I.C. - Ingestão de Metadados")
+st.set_page_config(layout="wide", page_title="S.I.V.I.C. - Ingestão Completa")
 
 if "historico" not in st.session_state:
     st.session_state.historico = []
@@ -231,7 +154,7 @@ col_esquerda, col_direita = st.columns([1, 2])
 
 with col_esquerda:
     st.markdown("### OPERAÇÕES DE INGESTÃO")
-    st.caption("Módulo forense avançado para mineração de arquivos binários, curtidas e autoria de comentários.")
+    st.caption("Filtro XPath cirúrgico para extração exclusiva de imagens do feed.")
     
     tipo_ingestao = st.radio("Método de Ingestão:", ["Automação (Selenium Local por URL)", "Upload Manual (Mídias Locais)"])
     
@@ -257,20 +180,20 @@ with col_esquerda:
                     pasta_perfil_robo = os.path.join(os.getcwd(), "perfil_robo_chrome")
                     chrome_options.add_argument(f"--user-data-dir={pasta_perfil_robo}")
                     
-                    driver = Chrome(options=chrome_options)
+                    driver = webdriver.Chrome(options=chrome_options)
                     driver.get(url_busca)
                     
                     st.session_state.driver_ativo = driver
-                    st.info("👉 Janela aberta! Se o Instagram pedir autenticação, conecte na sua conta. Quando as mídias do alvo carregarem na tela, clique no Passo 2.")
+                    st.info("👉 Janela aberta! Se o Instagram pedir login, entre na sua conta normalmente. Quando estiver vendo o perfil e as fotos carregadas, clique no Passo 2.")
                 except Exception as e:
                     st.error(f"Erro ao iniciar navegador: {e}")
             else:
                 st.error("Insira a URL do alvo.")
         
-        # PASSO 2: Iniciar extração profunda de posts, autores e comentários
+        # PASSO 2: Iniciar raspagem filtrada
         if st.button("PASSO 2: CONTA LOGADA, INICIAR EXTRAÇÃO EM MASSA", use_container_width=True, type="primary"):
             if st.session_state.driver_ativo and url_busca and caminho_computador:
-                with st.spinner("Navegando pelos posts, extraindo mídias, curtidas e associando autores aos comentários..."):
+                with st.spinner("Sessão ativa detectada. Ignorando stories e baixando posts por varredura profunda..."):
                     coleta = ScrapingInstagram(url_busca, caminho_computador, st.session_state.driver_ativo)
                     res = coleta.extrair()
                     
@@ -279,7 +202,7 @@ with col_esquerda:
                         
                         novo_registro = {
                             "ID TAREFA": f"#CD-{st.session_state.contador_id}",
-                            "FONTE": "Instagram OSINT (Mídias + Interações)",
+                            "FONTE": "Instagram OSINT (Feed Filtro)",
                             "FOTO ALVO": res["FOTO"],
                             "ALVO (PERFIL)": res["ALVO"],
                             "EVIDÊNCIA COLETADA": res["EVIDENCIA"],
@@ -288,7 +211,10 @@ with col_esquerda:
                         }
                         st.session_state.historico.insert(0, novo_registro)
                         st.session_state.contador_id += 1
-                        st.success("Dados de engajamento e arquivos originais salvos com sucesso!")
+                        st.success(f"Extração Concluída com Sucesso! Fotos salvas em: {caminho_computador}")
+                        
+                        st.session_state.driver_ativo.quit()
+                        st.session_state.driver_ativo = None
             else:
                 st.error("Abra o navegador pelo Passo 1 antes de iniciar o Passo 2.")
                 
