@@ -1,0 +1,25 @@
+# --- PERFIL ISOLADO DO CHROME 
+perfil_robo_chrome/
+
+# --- DIRETÓRIO DE MÍDIAS COLETADAS
+# Evita que mídias pesadas de testes antigos poluam o repositório
+midias_coletadas/
+
+# --- AMBIENTE VIRTUAL PYTHON ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- ARQUIVOS TEMPORÁRIOS DO STREAMLIT ---
+.streamlit/config.toml
+.streamlit/runtime/
+
+# --- CACHE DO PYTHON ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- SISTEMA OPERACIONAL ---
+.DS_Store
+Thumbs.db
