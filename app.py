@@ -1,8 +1,13 @@
 import streamlit as st
 import pandas as pd
 import hashlib
+import json
 from datetime import datetime
+import urllib.request
 
+# ==========================================
+# MODELAGEM DE CLASSES (ORIENTAÇÃO A OBJETOS)
+# ==========================================
 
 class OrigemDado:
     def __init__(self, tipo_fonte):
@@ -11,34 +16,67 @@ class OrigemDado:
         self.hash_validacao = ""
 
     def calcular_hash(self, conteudo: str) -> str:
+        # Garante a integridade da Cadeia de Custódia computando o Hash legítimo do dado
         sha256 = hashlib.sha256()
         sha256.update(conteudo.encode('utf-8'))
         self.hash_validacao = sha256.hexdigest()[:12]
         return self.hash_validacao
 
-class ScrapingOSINT(OrigemDado):
-    def __init__(self, url_alvo, profundidade):
-        super().__init__("Scraping (OSINT)")
-        self.url_alvo = url_alvo
-        self.profundidade = profundidade
+class ScrapingRedeSocial(OrigemDado):
+    def __init__(self, termo_alvo):
+        super().__init__("Coleta Automatizada")
+        self.termo_alvo = termo_alvo
+
+    def executar_raspagem_rede_social(self):
+        """Dispara requisição HTTP real para extrair postagens e usuários reais de fontes públicas"""
+        dados_coletados = []
+        try:
+            # Formata o termo de busca para pesquisar em toda a rede social
+            termo_enc = urllib.parse.quote(self.termo_alvo)
+            url_api = f"https://www.reddit.com/search.json?q={termo_enc}&limit=5"
+            
+            # Define um User-Agent para a rede social não bloquear a requisição do servidor
+            headers = {'User-Agent': 'SIVIC-Intelligence-Bot/1.0 (Academic Investigation Project)'}
+            req = urllib.request.Request(url_api, headers=headers)
+            
+            with urllib.request.urlopen(req, timeout=10) as response:
+                json_data = json.loads(response.read().decode('utf-8'))
+            
+            # Navega na estrutura de dados do JSON da rede social
+            posts = json_data.get("data", {}).get("children", [])
+            
+            for post in posts:
+                data_post = post.get("data", {})
+                usuario = data_post.get("author")
+                texto = data_post.get("title")
+                url_midia = data_post.get("url")
+                subreddit = data_post.get("subreddit_name_prefixed")
+                
+                dados_coletados.append({
+                    "PERFIL_ALVO": f"u/{usuario}",
+                    "CONTEUDO": f"[{subreddit}] {texto}",
+                    "URL_EVIDENCIA": url_midia
+                })
+        except Exception as e:
+            st.error(f"Erro de comunicação com os servidores da rede social: {e}")
+        
+        return dados_coletados
 
 class InsercaoManual(OrigemDado):
     def __init__(self, nome_arquivo):
         super().__init__("Inserção Manual")
         self.nome_arquivo = nome_arquivo
 
+# ==========================================
+# CONFIGURAÇÃO DA INTERFACE (STREAMLIT)
+# ==========================================
 
-st.set_page_config(layout="wide", page_title="S.I.V.I.C. - Ingestão")
+st.set_page_config(layout="wide", page_title="S.I.V.I.C. - Ingestão Investigativa")
 
 if "historico" not in st.session_state:
-    st.session_state.historico = [
-        {"ID": "#CD-9021", "FONTE": "Scraping (OSINT)", "ALVO/ARQUIVO": "https://twitter.com/suspect_alpha", "DATA/HORA": "2023-10-27 14:32:11", "HASH": "a3f5b7c9e1d2", "STATUS": "CONCLUÍDO"},
-        {"ID": "#CD-9020", "FONTE": "Scraping (OSINT)", "ALVO/ARQUIVO": "https://facebook.com/public_group_x", "DATA/HORA": "2023-10-27 13:15:00", "HASH": "7e2c9b1a4f8d", "STATUS": "EM ANDAMENTO"},
-        {"ID": "#CD-9019", "FONTE": "Inserção Manual", "ALVO/ARQUIVO": "foto_local_suspeito.png", "DATA/HORA": "2023-10-27 10:05:44", "HASH": "92f8a1c3d7e5", "STATUS": "CONCLUÍDO"},
-        {"ID": "#CD-9018", "FONTE": "Scraping (OSINT)", "ALVO/ARQUIVO": "http://darknet_forum_xyz.onion", "DATA/HORA": "2023-10-26 23:59:12", "HASH": "000000000000", "STATUS": "FALHA"}
-    ]
+    st.session_state.historico = []
 if "contador_id" not in st.session_state:
-    st.session_state.contador_id = 9022
+    st.session_state.contador_id = 1001
 
 st.markdown("<h2 style='margin-bottom: 0;'>S.I.V.I.C.</h2>", unsafe_allow_html=True)
 abas = ["Dashboard", "Coleta", "Vínculos", "Biometria", "Histórico", "Auditoria"]
@@ -49,67 +87,77 @@ st.markdown("---")
 col_esquerda, col_direita = st.columns([1, 2])
 
 with col_esquerda:
-    st.markdown("### COLETA DE DADOS")
-    st.caption("Configure o alvo para extração de dados públicos ou faça a inserção local.")
+    st.markdown("### COLETA DE DADOS ALVO")
+    st.caption("Extração automatizada de perfis e evidências digitais em redes abertas.")
     
-    tipo_ingestao = st.radio("Método de Ingestão:", ["Automação (Scraping/OSINT)", "Upload Manual (Mídias Locais)"])
+    tipo_ingestao = st.radio("Método de Ingestão:", ["Automação (Scraping de Rede Social)", "Upload Manual (Mídias Locais)"])
     
-    if tipo_ingestao == "Automação (Scraping/OSINT)":
-        url = st.text_input("URL da Rede Social / Alvo", placeholder="https://exemplo.com/perfil")
-        profundidade = st.selectbox("Profundidade da Extração", ["Nível 1 (Apenas Perfil)", "Nível 2 (Perfil e Seguidores)"])
+    if tipo_ingestao == "Automação (Scraping de Rede Social)":
+        termo_busca = st.text_input("Identificador / Termo de Investigação", placeholder="Ex: Nome de usuário, apelido, link ou grupo")
         
-        if st.button("INICIAR RASPAGEM", use_container_width=True):
-            if url:
-                coleta = ScrapingOSINT(url, profundidade)
-                hash_calculado = coleta.calcular_hash(url)
-                
-                novo_registro = {
-                    "ID": f"#CD-{st.session_state.contador_id}",
-                    "FONTE": coleta.tipo_fonte,
-                    "ALVO/ARQUIVO": coleta.url_alvo,
-                    "DATA/HORA": coleta.data_ingestao,
-                    "HASH": hash_calculado,
-                    "STATUS": "CONCLUÍDO"
-                }
-                st.session_state.historico.insert(0, novo_registro)
-                st.session_state.contador_id += 1
-                st.success("Raspagem concluída com sucesso!")
+        if st.button("INICIAR RASPAGEM EM REDE SOCIAL", use_container_width=True):
+            if termo_busca:
+                with st.spinner("Conectando à rede externa e quebrando payload de dados..."):
+                    coleta = ScrapingRedeSocial(termo_busca)
+                    resultados = list(coleta.executar_raspagem_rede_social())
+                    
+                    if resultados:
+                        for res in resultados:
+                            # Passa a URL da evidência para a regra de negócio da classe pai computar o Hash
+                            hash_calc = coleta.calcular_hash(res["URL_EVIDENCIA"])
+                            
+                            novo_registro = {
+                                "ID TAREFA": f"#CD-{st.session_state.contador_id}",
+                                "FONTE": coleta.tipo_fonte,
+                                "ALVO (PERFIL)": res["PERFIL_ALVO"],
+                                "EVIDÊNCIA COLETADA": res["CONTEUDO"],
+                                "HASH (CADEIA DE CUSTÓDIA)": hash_calc,
+                                "STATUS": "CONCLUÍDO"
+                            }
+                            st.session_state.historico.insert(0, novo_registro)
+                            st.session_state.contador_id += 1
+                        st.success(f"Sucesso! {len(resultados)} postagens e perfis reais indexados.")
+                    else:
+                        st.warning("Nenhuma evidência pública localizada para este alvo.")
             else:
-                st.error("Insira uma URL válida.")
+                st.error("Insira o identificador do alvo para a varredura.")
                 
     else:
-        arquivos = st.file_uploader("Selecione os arquivos de imagem", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+        arquivos = st.file_uploader("Selecione arquivos de evidência criminal (Fotos de Inteligência)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
         
-        if st.button("PROCESSAR ARQUIVOS", use_container_width=True):
+        if st.button("PROCESSAR IMAGENS", use_container_width=True):
             if arquivos:
                 for arq in arquivos:
                     manual = InsercaoManual(arq.name)
                     hash_calculado = manual.calcular_hash(arq.name + str(arq.size))
                     
                     novo_registro = {
-                        "ID": f"#CD-{st.session_state.contador_id}",
+                        "ID TAREFA": f"#CD-{st.session_state.contador_id}",
                         "FONTE": manual.tipo_fonte,
-                        "ALVO/ARQUIVO": manual.nome_arquivo,
-                        "DATA/HORA": manual.data_ingestao,
-                        "HASH": hash_calculado,
+                        "ALVO (PERFIL)": "Upload Local",
+                        "EVIDÊNCIA COLETADA": f"Arquivo de Mídia: {manual.nome_arquivo}",
+                        "HASH (CADEIA DE CUSTÓDIA)": hash_calculado,
                         "STATUS": "CONCLUÍDO"
                     }
                     st.session_state.historico.insert(0, novo_registro)
                     st.session_state.contador_id += 1
-                st.success(f"{len(arquivos)} arquivo(s) processados!")
+                st.success(f"{len(arquivos)} arquivo(s) acoplados à cadeia de custódia!")
             else:
-                st.error("Nenhum arquivo selecionado.")
+                st.error("Selecione ao menos um arquivo válido.")
 
 with col_direita:
     st.markdown("### HISTÓRICO DE COLETAS PÚBLICAS")
-    st.caption("Últimas tarefas registradas pelo sistema com blindagem de Cadeia de Custódia.")
+    st.caption("Central de custódia e persistência de dados brutos coletados.")
     
-    df = pd.DataFrame(st.session_state.historico)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    
-    st.download_button(
-        label="EXPORTAR RELATÓRIO [CSV]",
-        data=df.to_csv(index=False).encode('utf-8'),
-        file_name='historico_ingestao_sivic.csv',
-        mime='text/csv',
-    )
+    if st.session_state.historico:
+        df = pd.DataFrame(st.session_state.historico)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        st.download_button(
+            label="EXPORTAR RELATÓRIO DE EVIDÊNCIAS [CSV]",
+            data=df.to_csv(index=False).encode('utf-8'),
+            file_name='evidencias_sivic.csv',
+            mime='text/csv',
+        )
+    else:
+        st.info("Nenhuma evidência capturada até o momento. Utilize o painel esquerdo.")
