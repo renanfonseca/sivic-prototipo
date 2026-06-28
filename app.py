@@ -57,7 +57,7 @@ class ScrapingInstagram(Scraping):
                 driver.get(self.url_perfil)
                 time.sleep(3)
 
-            # --- ANTÍDOTO CONTRA STORIES ABERTOS ---
+            # --- CONTRA STORIES ABERTOS ---
             try:
                 botao_fechar_story = driver.find_element(By.XPATH, "//*[@aria-label='Fechar' or @aria-label='Close']|//*[local-name()='svg' and @aria-label='Fechar']/..")
                 botao_fechar_story.click()
